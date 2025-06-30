@@ -98,6 +98,11 @@ typedef struct {
   /// - second index: tx antenna [0..nb_antennas_tx[
   /// - third index: frequency [0..]
   int32_t **tdd_calib_coeffs;
+  int buffboundary;      // Previous buffer boundary position for TX/RX
+  int circular_buff_size;   // Size of the RX storage buffer
+  cf_t **circular_buff;  // (nb_rx(=nb_tx), sample_per_slot*20) Cyclic boundary buffer for storing RU received waveform
+  cf_t *simul_input;     // (nb_tx(=nb_rx)*channel_length, nsamps).flatten
+  cf_t *noise_array;
 } RU_COMMON;
 
 
@@ -175,7 +180,8 @@ typedef struct RU_proc_t_s {
   /// subframe to act upon for reception of prach BL/CE UEs
   int subframe_prach_br;
   /// frame to act upon for reception
-  int frame_rx;
+  // int frame_rx;
+  volatile int frame_rx;
   /// frame to act upon for transmission
   int frame_tx;
   /// unwrapped frame count
@@ -225,6 +231,10 @@ typedef struct RU_proc_t_s {
   pthread_t pthread_feptx;
   /// pthread structure for asychronous RX/TX processing thread
   pthread_t pthread_asynch_rxtx;
+  /// pthread struct for MIMO processing
+  pthread_t pthread_mimo;
+  /// pthread struct for noise generation/read
+  pthread_t pthread_noise;
   /// flag to indicate first RX acquisition
   int first_rx;
   /// flag to indicate first TX transmission
@@ -299,6 +309,10 @@ typedef struct RU_proc_t_s {
   pthread_mutex_t mutex_feptx;
   /// mutex for ru_thread
   pthread_mutex_t mutex_ru;
+  /// mutex for MIMO processing
+  pthread_mutex_t mutex_mimo;
+  /// mutex for noise generator/reader
+  pthread_mutex_t mutex_noise;
   /// symbol mask for IF4p5 reception per subframe
   uint32_t symbol_mask[10];
   /// time measurements for each subframe
@@ -596,6 +610,13 @@ typedef struct RU_t_s {
   /// number of cores for RU ThreadPool
   int num_tpcores;
   void* scopeData;
+  /// MIMO shared variables
+  int *delayindexlist;
+  cf_t *cirMIMO_simulmatrix; // (nb_tx * nb_rx  * channel_length) => (nb_tx, nb_rx*channel_length)
+  cf_t **noise_array;
+  cf_t pathLossLinear;    // TODO: use float here instead of cf_t
+  cf_t noise_per_sample;  // TODO: use float here instead of cf_t
+  int32_t channel_length;
 } RU_t;
 
 
