@@ -2,7 +2,6 @@
  * SPDX-License-Identifier: LicenseRef-CSSL-1.0
  */
 
-#define DEVELOP_CIR
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,12 +46,9 @@ static int DEFRUTPCORES[] = {-1,-1,-1,-1};
 #include "nfapi_interface.h"
 #include <nfapi/oai_integration/vendor_ext.h>
 #include "executables/nr-softmodem-common.h"
+#include <cblas.h>
 
 static void NRRCconfig_RU(configmodule_interface_t *cfg);
-
-#ifdef DEVELOP_CIR
-#include <cblas.h>
-#endif // DEVELOP_CIR
 
 /*************************************************************/
 /* Southbound Fronthaul functions, RCC/RAU                   */
@@ -141,8 +137,7 @@ void fh_if5_south_in(RU_t *ru, int *frame, int *tti)
           rxmeas.tv_nsec);
 }
 
-#ifdef DEVELOP_CIR
-// noise reader
+// Noise reader
 static void noise_reader(RU_t *ru, cf_t *ret_noise, int nsamps, int nb_antennas)
 {
   cf_t *noise_1d = (cf_t *)ret_noise;
@@ -161,7 +156,6 @@ static void noise_reader(RU_t *ru, cf_t *ret_noise, int nsamps, int nb_antennas)
   ru->noise_index = noise_index;
   pthread_mutex_unlock(&ru->proc.mutex_noise);
 }
-#endif // DEVELOP_CIR
 
 static void rx_rf(RU_t *ru, int *frame, int *slot)
 {
@@ -170,14 +164,6 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
   openair0_config_t *cfg   = &ru->openair0_cfg;
   uint32_t samples_per_slot = get_samples_per_slot(*slot, fp);
   AssertFatal(*slot < fp->slots_per_frame && *slot >= 0, "slot %d is illegal (%d)\n", *slot, fp->slots_per_frame);
-
-#ifdef DEVELOP_CIR
-  int a_rx;
-  int nb_tx = ru->nb_tx;
-  int nb_rx = ru->nb_rx;
-  cf_t pathLossLinear = {0};
-  cf_t noise_per_sample = {0};
-#endif // DEVELOP_CIR
 
   start_meas(&ru->rx_fhaul);
   int nb = ru->nb_rx;
@@ -193,12 +179,15 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
   rxs = ru->rfdevice.trx_read_func(&ru->rfdevice, &ts, rxp, samples_per_slot, nb);
   proc->timestamp_rx = ts-ru->ts_offset;
 
-#ifdef DEVELOP_CIR
-
   nfapi_nr_config_request_scf_t *config = &ru->config;
   int slot_type = nr_slot_select(config, *frame, *slot % fp->slots_per_frame);
 
-  if (slot_type == NR_UPLINK_SLOT || slot_type == NR_MIXED_SLOT) {
+  if (ru->cir_was_received && (slot_type == NR_UPLINK_SLOT || slot_type == NR_MIXED_SLOT)) {
+    int nb_tx = ru->nb_tx;
+    int nb_rx = ru->nb_rx;
+    cf_t pathLossLinear = {0};
+    cf_t noise_per_sample = {0};
+
     // init common variables
     pathLossLinear.r = ru->pathLossLinear;
     noise_per_sample.r = ru->noise_per_sample;
@@ -241,7 +230,7 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
       int delayed_boundary_s = (ru->common.buffboundary - l + ru->common.circular_buff_size) % ru->common.circular_buff_size;
       int delayed_boundary_e =
           (ru->common.buffboundary + samples_per_slot - l + ru->common.circular_buff_size) % ru->common.circular_buff_size;
-      for (a_rx = 0; a_rx < nb_rx; a_rx++) {
+      for (int a_rx = 0; a_rx < nb_rx; a_rx++) {
         if (delayed_boundary_s < delayed_boundary_e) { // data is contiguous in the buffer
           memcpy(&ru->common.simul_input[(nb_rx * lp + a_rx) * samples_per_slot],
                  &ru->common.circular_buff[a_rx][delayed_boundary_s],
@@ -305,8 +294,6 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
     }
     pthread_mutex_unlock(&ru->proc.mutex_mimo);
   }
-
-#endif // DEVELOP_CIR
 
   if (rxs != samples_per_slot)
     LOG_E(PHY, "rx_rf: Asked for %d samples, got %d from USRP\n", samples_per_slot, rxs);
@@ -521,20 +508,16 @@ int tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_s
   for (int i = 0; i < nt; i++)
     txp[i] = (void *)&ru->common.txdata[i][time_offset] - sf_extension * sizeof(int32_t);
 
-  #ifdef DEVELOP_CIR
-  int a_tx;
-  int nb_tx = ru->nb_tx;
-  int nb_rx = ru->nb_rx;
-  int samples_per_slot = siglen + sf_extension;
-  cf_t pathLossLinear = {0};
-  cf_t noise_per_sample = {0};
-#endif // DEVELOP_CIR
-
-#ifdef DEVELOP_CIR
-
   int slot_type = nr_slot_select(cfg, frame, slot % fp->slots_per_frame);
 
-  if (slot_type == NR_DOWNLINK_SLOT || slot_type == NR_MIXED_SLOT) {
+  if (ru->cir_was_received && (slot_type == NR_DOWNLINK_SLOT || slot_type == NR_MIXED_SLOT)) {
+    int a_tx;
+    int nb_tx = ru->nb_tx;
+    int nb_rx = ru->nb_rx;
+    int samples_per_slot = siglen + sf_extension;
+    cf_t pathLossLinear = {0};
+    cf_t noise_per_sample = {0};
+
     // init common variables
     pathLossLinear.r = ru->pathLossLinear;
     noise_per_sample.r = ru->noise_per_sample;
@@ -641,8 +624,6 @@ int tx_rf_symbols(RU_t *ru, int frame, int slot, uint64_t timestamp, int start_s
     }
     pthread_mutex_unlock(&ru->proc.mutex_mimo);
   }
-
-#endif // DEVELOP_CIR
 
   // prepare tx buffer pointers
   uint32_t txs = ru->rfdevice.trx_write_func(&ru->rfdevice,
