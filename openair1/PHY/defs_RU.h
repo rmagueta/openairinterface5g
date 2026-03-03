@@ -617,6 +617,7 @@ typedef struct RU_t_s {
   float noise_per_sample;
   int32_t channel_length;
   uint32_t noise_index;
+  bool cir_was_received;
 } RU_t;
 
 
